@@ -1,0 +1,236 @@
+---
+title: "R-Club-script"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+library("knitr")
+opts_knit$set(root.dir = "~/Desktop/code/R_Club_CG")
+```
+
+Load packages
+```{r}
+library(catmaid)
+library(dplyr)
+library(tidyr)
+library(elmr)
+library(RColorBrewer)
+
+catmaid_login(server = "https://neuropil.janelia.org/tracing/fafb/v14/", authname = "fly", authpassword = "superfly",
+              username = "eichlerk", password = "eichlerk", token = "df0e3a17ecec1d404ca28127a492136bfdae86e5",
+              authtype = getOption("catmaid.authtype", default = "basic"))
+
+```
+
+### 1.Dataclub 2019_07_18
+dplyr is the main data-handling package in R. For installation see: https://www.r-project.org/nosvn/pandoc/dplyr.html
+
+The cheat sheet has some good information: https://www.rstudio.com/wp-content/uploads/2015/02/data-wrangling-cheatsheet.pdf
+
+An example problem to demonstrate the uses of dplyr, focussing on generating an manipulating neuron data.
+
+
+1. Read skids and neurons (in this case a selection of 10 excitatory and inhibitory mPNs)
+```{r}
+excitatory.mPNs.sk = catmaid_skids("Rclub_1807_Ex")
+inhibitory.mPNs.sk = catmaid_skids("Rclub_1807_In")
+excitatory.mPNs = read.neurons.catmaid(excitatory.mPNs.sk)
+inhibitory.mPNs = read.neurons.catmaid(inhibitory.mPNs.sk)
+```
+
+2. Construct data frames with information about each neuron
+```{r}
+#excitatory
+excitatory.df = data.frame(skid = excitatory.mPNs.sk, 
+                           name = catmaid_get_neuronnames(excitatory.mPNs.sk), 
+                           row.names = NULL)
+#inhibitory
+inhibitory.df = data.frame(skid = inhibitory.mPNs.sk, 
+                           name = catmaid_get_neuronnames(inhibitory.mPNs.sk),
+                           row.names = NULL)
+```
+
+
+3. Add some addition information about tract and type
+```{r}
+#the pipe operator %>% takes the output of one function and uses it as the input for another
+excitatory.df %>% 
+  mutate(type = "excitatory") %>% 
+  mutate(tract = "mALT") -> excitatory.df
+inhibitory.df %>% 
+  mutate(type = "inhibitory") %>%
+  mutate(tract = "mlALT") -> inhibitory.df
+excitatory.df
+inhibitory.df
+```
+
+
+These functions can be used individually, but a data frame needs specifying e.g.
+
+mutate(df, type = "excitatory")
+
+is equivalent to
+
+df %>%
+  mutate(type = "excitatory")
+  
+The latter just allows you to pipe long chains of commands together without the need to make a load of intermediary variables.
+
+
+4. Merge data frames and filter by some variable
+```{r}
+bind_rows(excitatory.df, inhibitory.df) -> merge.df #bind_rows() joins by position
+#filter by type
+merge.df %>%
+  filter(type == "excitatory")
+#filter by tract
+merge.df %>%
+  filter(tract == "mlALT")
+#filter by names containing "VP1"
+merge.df %>%
+  filter(grepl("VP1", name))
+```
+
+
+5. We can do more complicated transformations with relative ease in dplyr.
+Here we would like to generate a connectivity matrix showing numbers of synapses between the 20 mPNs and all their downstream partners.
+```{r}
+connectors = catmaid_get_connector_table(skids = c(excitatory.mPNs.sk, inhibitory.mPNs.sk)) #a list of all connectors incoming and outgoing from the mPNs
+connectors %>%
+  filter(direction == "outgoing") %>%                #downstream targets only
+  na.omit() %>%                    #removes unconnected pre-synapses
+  group_by(skid) %>%                    #specify skid as a group that we want to perfrom some kind of summary on
+  count(partner_skid) %>%                     #counts partner_skid per group (skid)
+  spread(partner_skid, n, fill = NA) -> connectivity.matrix             #from the package "tidyr". Splits one column apart (partner_skid) and populates the new cells with new values (n)
+connectivity.matrix
+```
+At any stage we can pipe to the View() function which creates a temporary windown with the output. Very useful when working with a long chain of commands.
+
+### 2.Dataclub 2019_08_01
+
+1. Plot 20 neurons using the annotations "Rclub_1807_Ex" and "Rclub_1807_In"
+
+```{r}
+neurons.all = c(excitatory.mPNs, inhibitory.mPNs)
+```
+
+```{r}
+open3d()
+plot3d(neurons.all, add = TRUE, col = "black", soma = TRUE, WithConnectors = TRUE, lwd = 3)
+```
+OR
+```{r}
+open3d()
+plot3d(excitatory.mPNs, add = TRUE, col = "black", soma = TRUE, WithConnectors = TRUE, lwd = 3)
+plot3d(inhibitory.mPNs, add = TRUE, col = "black", soma = TRUE, WithConnectors = TRUE, lwd = 3)
+```
+
+2. Colour these neurons by subset i.e. tract/ type
+
+```{r}
+excitatory.df %>% 
+  mutate(type = "excitatory") %>% 
+  mutate(tract = "mALT") %>% 
+  mutate(color = "cyan") -> excitatory.df
+inhibitory.df %>% 
+  mutate(type = "inhibitory") %>%
+  mutate(tract = "mlALT") %>% 
+  mutate(color = "magenta") -> inhibitory.df
+```
+
+```{r}
+excitatory.df$name = as.character(excitatory.df$name)
+inhibitory.df$name = as.character(inhibitory.df$name)
+```
+
+```{r}
+bind_rows(excitatory.df, inhibitory.df) -> merge.df
+merge.df = arrange(merge.df, skid)
+color_list <- as.vector(merge.df$color)
+
+neurons.all[,"colours"] = color_list
+
+```
+
+```{r}
+open3d()
+plot3d(neurons.all, add = TRUE, col = neurons.all[,"colours"], soma = TRUE, WithConnectors = TRUE, lwd = 3)
+```
+OR
+```{r}
+open3d()
+plot3d(excitatory.mPNs, add = TRUE, col = "cyan", soma = TRUE, WithConnectors = TRUE, lwd = 3)
+plot3d(inhibitory.mPNs, add = TRUE, col = "magenta", soma = TRUE, WithConnectors = TRUE, lwd = 3)
+```
+
+3. Plot neuropil volumes in such a way as to show the innervation sites of these neurons
+
+Call the neuropil volumes Antennal lobe, calyx and lateral horn from CATMAID
+```{r}
+AL_right = catmaid_get_volume("AL_R")
+calyx_right = catmaid_get_volume("MB_CA_R")
+LH_right = catmaid_get_volume("LH_R")
+```
+
+```{r}
+open3d()
+plot3d(AL_right, col = "blue", alpha = 0.1, add = TRUE)
+plot3d(calyx_right, col = "red", alpha = 0.1, add = TRUE)
+plot3d(LH_right, col = "red", alpha = 0.1, add = TRUE)
+plot3d(neurons.all, col = "black", soma = TRUE, WithConnectors = FALSE, add = TRUE, lwd = 3)
+```
+
+4. Using one neuron (neuron #1722886), differentially colour the pre and postsynapses.
+
+```{r}
+neuron1.skid = 1722886
+neuron1 = read.neurons.catmaid(neuron1.skid)
+neuron1.conn = connectors(neuron1)
+```
+
+```{r}
+neuron1.conn %>%
+  mutate(color = ifelse(prepost == "1", "orange", "green")) -> neuron1.conn
+
+```
+
+```{r}
+open3d()
+plot3d(neuron1, add = TRUE, col = "black", soma = TRUE, WithConnectors = FALSE, lwd = 3)
+points3d(neuron1.conn[,c(4:6)], add = TRUE, col = neuron1.conn$color)
+```
+
+5. With the same neuron, differentially colour the axon and dendrite using tag 'axon' and 'dendrite'
+
+```{r}
+neuron1.axon = prune_by_tag(neuron1, tag = "axon", remove.upstream = TRUE)
+neuron1.dendrite = prune_by_tag(neuron1, tag = "dendrite", remove.upstream = TRUE)
+```
+
+```{r}
+open3d()
+plot3d(neuron1.axon, add = TRUE, col = "red", WithConnectors = FALSE, lwd = 3)
+plot3d(neuron1.dendrite, add = TRUE, col = "blue", WithConnectors = FALSE, lwd = 3)
+plot3d(neuron1, col = "black", soma = TRUE, lwd = 3) 
+```
+
+6. (Optional) Colour the neuron by strahler order using RColorBrewer.
+
+```{r}
+n = neuron1[[1]]
+so=strahler_order(n)
+orders=1:max(so$points)
+color_strahler = brewer.pal(max(orders), "Dark2")
+open3d()
+for (i in orders) {
+  plot3d(subset(n, so$points==i), col= color_strahler[i], add = i!=1)
+}
+```
+
+
+Some helpful links to packages: http://jefferis.github.io/rcatmaid/reference/
+http://jefferis.github.io/nat/reference/
+https://www.nceas.ucsb.edu/~frazier/RSpatialGuides/colorPaletteCheatsheet.pdf
+
